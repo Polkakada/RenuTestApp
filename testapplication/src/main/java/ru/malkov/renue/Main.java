@@ -12,16 +12,17 @@ import java.io.IOException;
 import java.io.RandomAccessFile;
 import java.nio.charset.StandardCharsets;
 import java.util.*;
+import java.util.function.Function;
 
 public class Main {
 
-    public static boolean containPrefix(String string, String prefix) {
+    private static boolean containPrefix(String string, String prefix) {
         if (prefix.length() + 1 > string.length()) return false;
         String substring = string.substring(1, prefix.length() + 1);
         return substring.equals(prefix);
     }
 
-    public static void sort(int column, String filename) {
+    private static void sort(int column, String filename) {
         Serializer<CSVRecord> serializer =
                 Serializer.csv(
                         CSVFormat.DEFAULT.withQuote(null),
@@ -39,7 +40,20 @@ public class Main {
                 .sort();
     }
 
-    public static List<String> search(String prefix, int column, String filename) {
+    private static long getPreviousLineStart(long lineStart, RandomAccessFile raf) throws IOException {
+        lineStart -= 2;
+        raf.seek(lineStart);
+        byte b = raf.readByte();
+        while (b != 10) {
+            lineStart--;
+            raf.seek(lineStart);
+            b = raf.readByte();
+        }
+
+        return lineStart;
+    }
+
+    private static List<String> search(String prefix, int column, String filename) {
         List<String> results = new ArrayList<>();
         try (RandomAccessFile raf = new RandomAccessFile(filename, "r");) {
             long bottom = raf.length();
@@ -60,20 +74,30 @@ public class Main {
                     }
                 }
                 if (comparison == 0) {
-                    while (containPrefix(line[column - 1], prefix)) {
-                        middle -= 100;
-                        raf.seek(middle);
-                        line = raf.readLine().split(",");
-                        if (line.length != 14) {
+                    long point = raf.getFilePointer();
+                    middle = getPreviousLineStart(raf.getFilePointer(), raf);
+                    results.add(line[column - 1] + Arrays.toString(line).replace(line[column - 1], ""));
+                    boolean isAnyTopMatches = true;
+                    boolean isAnyBottomMatches = true;
+                    while (isAnyBottomMatches || isAnyTopMatches) {
+                        if(isAnyTopMatches) {
+                            middle = getPreviousLineStart(middle, raf) + 1;
+                            raf.seek(middle);
                             line = raf.readLine().split(",");
+                            isAnyTopMatches = containPrefix(line[column - 1], prefix);
+                            if (isAnyTopMatches) {
+                                results.add(line[column - 1] + Arrays.toString(line).replace(line[column - 1], ""));
+                            }
                         }
-                    }
-                    while (!containPrefix(line[column - 1], prefix)) {
-                        line = raf.readLine().split(",");
-                    }
-                    while (containPrefix(line[column - 1], prefix)) {
-                        results.add(line[column - 1] + Arrays.toString(line).replace(line[column - 1], ""));
-                        line = raf.readLine().split(",");
+                        if(isAnyBottomMatches) {
+                            raf.seek(point);
+                            line = raf.readLine().split(",");
+                            isAnyBottomMatches = containPrefix(line[column - 1], prefix);
+                            if (isAnyBottomMatches) {
+                                results.add(line[column - 1] + Arrays.toString(line).replace(line[column - 1], ""));
+                            }
+                            point=raf.getFilePointer();
+                        }
                     }
                     break;
                 } else if (comparison > 0) {
@@ -102,6 +126,7 @@ public class Main {
         long start = System.currentTimeMillis();
         List<String> results = search(prefix, column, "sortairports.dat");
         long finish = System.currentTimeMillis();
+        results.sort(Comparator.comparing(Function.identity()));
         for (String row : results) {
             System.out.println(row);
         }
